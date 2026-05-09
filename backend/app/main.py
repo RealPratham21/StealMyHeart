@@ -1,0 +1,239 @@
+import hashlib
+from datetime import datetime, timezone
+import cloudinary
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from .auth import create_access_token, decode_access_token, hash_password, verify_password
+from .config import (
+    CLOUD_NAME,
+    CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET,
+    FRONTEND_ORIGIN,
+    JWT_SECRET,
+)
+from .db import close_db_pool, db_pool, open_db_pool
+from .schemas import (
+    CloudinarySignatureRequest,
+    LoginRequest,
+    OnboardingRequest,
+    SignupRequest,
+)
+
+if CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+    cloudinary.config(
+        cloud_name=CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+    )
+
+app = FastAPI(title="StealMyHeart Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_ORIGIN],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    if not JWT_SECRET:
+        raise RuntimeError("JWT_SECRET is not set.")
+    open_db_pool()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    close_db_pool()
+
+
+def _get_token_from_cookie(request: Request) -> str:
+    token = request.cookies.get("auth_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    return token
+
+
+def _get_current_user_id(request: Request) -> str:
+    token = _get_token_from_cookie(request)
+    payload = decode_access_token(token)
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    return str(user_id)
+
+
+@app.post("/api/auth/signup")
+def signup(payload: SignupRequest, response: Response) -> dict:
+    email = payload.email.lower().strip()
+    full_name = payload.fullName.strip()
+    password_hash = hash_password(payload.password)
+
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE email = %s LIMIT 1", (email,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="An account with this email already exists.")
+
+            cur.execute(
+                """
+                INSERT INTO users (email, password_hash, full_name)
+                VALUES (%s, %s, %s)
+                RETURNING id, email, full_name
+                """,
+                (email, password_hash, full_name),
+            )
+            row = cur.fetchone()
+
+    token = create_access_token(str(row[0]), str(row[1]))
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+    )
+    return {"message": "Signup successful.", "user": {"id": str(row[0]), "email": str(row[1]), "fullName": row[2]}}
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest, response: Response) -> dict:
+    email = payload.email.lower().strip()
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, email, password_hash, full_name
+                FROM users
+                WHERE email = %s
+                LIMIT 1
+                """,
+                (email,),
+            )
+            row = cur.fetchone()
+
+    if not row or not verify_password(payload.password, str(row[2])):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    token = create_access_token(str(row[0]), str(row[1]))
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+    )
+    return {"message": "Login successful.", "user": {"id": str(row[0]), "email": str(row[1]), "fullName": row[3]}}
+
+
+@app.get("/api/auth/me")
+def me(request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, email, full_name, first_name, age, gender, bio, city, interests, photo_urls
+                FROM users
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+
+    return {
+        "user": {
+            "id": str(row[0]),
+            "email": row[1],
+            "full_name": row[2],
+            "first_name": row[3],
+            "age": row[4],
+            "gender": row[5],
+            "bio": row[6],
+            "city": row[7],
+            "interests": row[8],
+            "photo_urls": row[9],
+        }
+    }
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response) -> dict:
+    response.delete_cookie("auth_token", path="/")
+    return {"message": "Logged out."}
+
+
+def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET first_name = %s,
+                    age = %s,
+                    gender = %s,
+                    bio = %s,
+                    city = %s,
+                    interests = %s,
+                    photo_urls = %s
+                WHERE id = %s
+                RETURNING id
+                """,
+                (
+                    payload.firstName.strip(),
+                    payload.age,
+                    payload.gender,
+                    payload.bio.strip(),
+                    payload.city.strip(),
+                    payload.interests,
+                    payload.photoUrls,
+                    user_id,
+                ),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+
+@app.patch("/api/profile/onboarding")
+def onboarding(payload: OnboardingRequest, request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    _apply_profile_update(user_id, payload)
+    return {"message": "Profile updated."}
+
+
+@app.patch("/api/profile")
+def update_profile(payload: OnboardingRequest, request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    _apply_profile_update(user_id, payload)
+    return {"message": "Profile updated."}
+
+
+@app.post("/api/uploads/signature")
+def upload_signature(payload: CloudinarySignatureRequest) -> dict:
+    if not (CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
+        raise HTTPException(status_code=500, detail="Cloudinary environment variables are missing.")
+
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    params = {"folder": payload.folder, "timestamp": timestamp}
+    to_sign = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    signature = hashlib.sha1(f"{to_sign}{CLOUDINARY_API_SECRET}".encode("utf-8")).hexdigest()
+
+    return {
+        "cloudName": CLOUD_NAME,
+        "apiKey": CLOUDINARY_API_KEY,
+        "folder": payload.folder,
+        "timestamp": str(timestamp),
+        "signature": signature,
+    }
