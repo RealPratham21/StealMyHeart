@@ -68,6 +68,23 @@ npm run dev
 - `PATCH /api/profile`
 - `POST /api/uploads/signature`
 
+## Seed Fake Users
+
+1) Install backend deps:
+
+```bash
+cd backend
+python -m pip install -r requirements.txt
+```
+
+2) Run seeding script (balanced male/female, one profile at a time: fetch image -> upload to Cloudinary -> insert row):
+
+```bash
+python -m scripts.seed_fake_users --count 2000 --progress-every 25
+```
+
+The script always resets and recreates the `users` table schema before seeding.
+
 ## Pushing to GitHub
 
 - Only **example** env files are tracked (`.env.example`, `backend/.env.example`, `frontend/.env.example`). Real `.env` / `.env.local` files are listed in `.gitignore`.
