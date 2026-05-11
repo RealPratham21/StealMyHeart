@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from datetime import datetime, timezone
 import cloudinary
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -63,6 +64,14 @@ def _get_current_user_id(request: Request) -> str:
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized.")
     return str(user_id)
+
+
+def _target_genders(current_gender: str | None) -> list[str]:
+    if current_gender == "man":
+        return ["woman"]
+    if current_gender == "woman":
+        return ["man"]
+    return ["man", "woman"]
 
 
 @app.post("/api/auth/signup")
@@ -171,6 +180,67 @@ def me(request: Request) -> dict:
 def logout(response: Response) -> dict:
     response.delete_cookie("auth_token", path="/")
     return {"message": "Logged out."}
+
+
+@app.get("/api/swipe/profiles")
+def swipe_profiles(request: Request, limit: int = 10) -> dict:
+    user_id = _get_current_user_id(request)
+    safe_limit = max(1, min(limit, 50))
+
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT gender, city
+                FROM users
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            current_user = cur.fetchone()
+
+            if not current_user:
+                raise HTTPException(status_code=401, detail="Unauthorized.")
+
+            genders = _target_genders(current_user[0])
+            city = current_user[1]
+
+            cur.execute(
+                """
+                SELECT id, first_name, full_name, age, gender, bio, city, interests, photo_urls
+                FROM users
+                WHERE id <> %s
+                  AND gender = ANY(%s)
+                ORDER BY
+                  CASE
+                    WHEN city IS NOT NULL AND city = %s THEN 0
+                    ELSE 1
+                  END,
+                  random()
+                LIMIT %s
+                """,
+                (user_id, genders, city, safe_limit),
+            )
+            rows = cur.fetchall()
+
+    profiles = []
+    for row in rows:
+        profiles.append(
+            {
+                "id": str(row[0]) if isinstance(row[0], uuid.UUID) else row[0],
+                "first_name": row[1],
+                "full_name": row[2],
+                "age": row[3],
+                "gender": row[4],
+                "bio": row[5],
+                "city": row[6],
+                "interests": row[7] or [],
+                "photo_urls": row[8] or [],
+            }
+        )
+
+    return {"profiles": profiles}
 
 
 def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
