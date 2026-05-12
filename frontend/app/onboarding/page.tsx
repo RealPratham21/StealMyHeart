@@ -36,8 +36,10 @@ export default function OnboardingPage() {
     age: "",
     gender: "",
   });
+  const [phone, setPhone] = useState("");
+  const [dob, setDob] = useState("");
   const [bio, setBio] = useState("");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState({ city: "", state: "", country: "India" });
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
 
   const steps: Step[] = ["photos", "basics", "bio", "location", "interests"];
@@ -99,11 +101,11 @@ export default function OnboardingPage() {
       case "photos":
         return photoUrlsOrdered.length >= 1;
       case "basics":
-        return basics.name && basics.age && basics.gender;
+        return basics.name && basics.age && basics.gender && phone.trim().length >= 7 && dob;
       case "bio":
         return bio.length >= 10;
       case "location":
-        return location.length >= 2;
+        return location.city.trim().length >= 2 && location.state.trim().length >= 2 && location.country.trim().length >= 2;
       case "interests":
         return selectedInterests.length >= 3;
       default:
@@ -126,7 +128,11 @@ export default function OnboardingPage() {
             age: Number(basics.age),
             gender: basics.gender.toLowerCase(),
             bio: bio.trim(),
-            city: location.trim(),
+            city: location.city.trim(),
+            state: location.state.trim(),
+            country: location.country.trim(),
+            phone: phone.trim(),
+            dob,
             interests: selectedInterests,
             photoUrls: photoUrlsOrdered,
           }),
@@ -303,6 +309,28 @@ export default function OnboardingPage() {
                     ))}
                   </div>
                 </div>
+
+                <div className="flex flex-col gap-2 text-left">
+                  <label className="text-sm font-medium text-foreground">
+                    Phone
+                  </label>
+                  <Input
+                    placeholder="Your phone number"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2 text-left">
+                  <label className="text-sm font-medium text-foreground">
+                    Date of Birth
+                  </label>
+                  <Input
+                    type="date"
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -344,9 +372,25 @@ export default function OnboardingPage() {
                   <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                   <Input
                     placeholder="Enter your city"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
+                    value={location.city}
+                    onChange={(e) => setLocation({ ...location, city: e.target.value })}
                     className="pl-10"
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <Input
+                    placeholder="Enter your state"
+                    value={location.state}
+                    onChange={(e) => setLocation({ ...location, state: e.target.value })}
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <Input
+                    placeholder="Country"
+                    value={location.country}
+                    onChange={(e) => setLocation({ ...location, country: e.target.value })}
                   />
                 </div>
                 <button

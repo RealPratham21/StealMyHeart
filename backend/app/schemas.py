@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 from pydantic import BaseModel, EmailStr, Field
 
@@ -19,6 +20,10 @@ class OnboardingRequest(BaseModel):
     gender: Literal["man", "woman", "other"]
     bio: str = Field(min_length=10, max_length=500)
     city: str = Field(min_length=2, max_length=120)
+    state: str = Field(min_length=2, max_length=120)
+    country: str = Field(min_length=2, max_length=120)
+    phone: str = Field(min_length=7, max_length=30)
+    dob: date
     interests: list[str] = Field(min_length=3, max_length=5)
     photoUrls: list[str] = Field(min_length=1, max_length=6)
 

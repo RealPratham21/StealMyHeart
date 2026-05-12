@@ -148,7 +148,7 @@ def me(request: Request) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, email, full_name, first_name, age, gender, bio, city, interests, photo_urls
+                SELECT id, email, full_name, first_name, age, gender, bio, city, state, country, dob, phone, interests, photo_urls
                 FROM users
                 WHERE id = %s
                 LIMIT 1
@@ -170,8 +170,12 @@ def me(request: Request) -> dict:
             "gender": row[5],
             "bio": row[6],
             "city": row[7],
-            "interests": row[8],
-            "photo_urls": row[9],
+            "state": row[8],
+            "country": row[9],
+            "dob": row[10],
+            "phone": row[11],
+            "interests": row[12],
+            "photo_urls": row[13],
         }
     }
 
@@ -254,6 +258,10 @@ def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
                     gender = %s,
                     bio = %s,
                     city = %s,
+                    state = %s,
+                    country = %s,
+                    dob = %s,
+                    phone = %s,
                     interests = %s,
                     photo_urls = %s
                 WHERE id = %s
@@ -265,6 +273,10 @@ def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
                     payload.gender,
                     payload.bio.strip(),
                     payload.city.strip(),
+                    payload.state.strip(),
+                    payload.country.strip(),
+                    payload.dob,
+                    payload.phone.strip(),
                     payload.interests,
                     payload.photoUrls,
                     user_id,
