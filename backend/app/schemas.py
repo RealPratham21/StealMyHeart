@@ -1,5 +1,6 @@
 from datetime import date
 from typing import Literal
+from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -30,3 +31,8 @@ class OnboardingRequest(BaseModel):
 
 class CloudinarySignatureRequest(BaseModel):
     folder: str = "stealmyheart/profiles"
+
+
+class SwipeRequest(BaseModel):
+    swipedId: UUID
+    direction: bool  # TRUE = like, FALSE = pass

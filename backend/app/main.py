@@ -18,6 +18,7 @@ from .schemas import (
     LoginRequest,
     OnboardingRequest,
     SignupRequest,
+    SwipeRequest,
 )
 
 if CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
@@ -212,19 +213,21 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
 
             cur.execute(
                 """
-                SELECT id, first_name, full_name, age, gender, bio, city, interests, photo_urls
-                FROM users
-                WHERE id <> %s
-                  AND gender = ANY(%s)
+                SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls
+                FROM users u
+                LEFT JOIN swipes s ON u.id = s.swiped_id AND s.swiper_id = %s
+                WHERE u.id <> %s
+                  AND u.gender = ANY(%s)
+                  AND s.id IS NULL
                 ORDER BY
                   CASE
-                    WHEN city IS NOT NULL AND city = %s THEN 0
+                    WHEN u.city IS NOT NULL AND u.city = %s THEN 0
                     ELSE 1
                   END,
                   random()
                 LIMIT %s
                 """,
-                (user_id, genders, city, safe_limit),
+                (user_id, user_id, genders, city, safe_limit),
             )
             rows = cur.fetchall()
 
@@ -245,6 +248,22 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
         )
 
     return {"profiles": profiles}
+
+
+@app.post("/api/swipe/action")
+def swipe_action(payload: SwipeRequest, request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO swipes (swiper_id, swiped_id, direction)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (swiper_id, swiped_id) DO NOTHING
+                """,
+                (user_id, str(payload.swipedId), payload.direction),
+            )
+    return {"message": "Swipe recorded."}
 
 
 def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
