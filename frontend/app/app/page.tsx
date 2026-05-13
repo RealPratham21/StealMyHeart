@@ -52,9 +52,21 @@ export default function DiscoverPage() {
     fetchProfiles();
   }, [fetchProfiles]);
 
-  const handleAction = (action: "like" | "pass" | "superlike") => {
+  const handleAction = async (action: "like" | "pass" | "superlike") => {
     if (!currentProfile) return;
     setLastAction(action === "superlike" ? "like" : action);
+
+    try {
+      const direction = action === "like" || action === "superlike";
+      await fetch(`${API_BASE_URL}/swipe/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ swipedId: currentProfile.id, direction }),
+      });
+    } catch {
+      // Silently fail swipe recording - UI still advances
+    }
 
     setTimeout(() => {
       if (currentIndex < profiles.length - 1) {
