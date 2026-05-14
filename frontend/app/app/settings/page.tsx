@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
 import {
   Bell,
   Shield,
@@ -33,12 +33,20 @@ type SettingSection = {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isDark = mounted && resolvedTheme === "dark";
+
   const [settings, setSettings] = useState({
     pushNotifications: true,
     emailNotifications: false,
     showOnlineStatus: true,
     showDistance: true,
-    darkMode: false,
     ageRange: "18-35",
     maxDistance: "50 miles",
   });
@@ -109,11 +117,11 @@ export default function SettingsPage() {
       title: "Appearance",
       items: [
         {
-          icon: settings.darkMode ? Moon : Sun,
+          icon: isDark ? Moon : Sun,
           label: "Dark Mode",
           description: "Use dark theme",
           action: "toggle",
-          value: settings.darkMode,
+          value: isDark,
         },
       ],
     },
@@ -184,7 +192,12 @@ export default function SettingsPage() {
 
                   {item.action === "toggle" && (
                     <button
+                      type="button"
                       onClick={() => {
+                        if (item.label === "Dark Mode") {
+                          setTheme(isDark ? "light" : "dark");
+                          return;
+                        }
                         const key = item.label
                           .replace(/\s+/g, "")
                           .replace(/^./, (c) => c.toLowerCase()) as keyof typeof settings;
