@@ -364,7 +364,7 @@ function Footer() {
 
 export default function LandingPage() {
   return (
-    <main className="min-h-screen">
+    <main className="dark min-h-screen bg-background text-foreground">
       <Navbar />
       <HeroSection />
       <FeaturesSection />
