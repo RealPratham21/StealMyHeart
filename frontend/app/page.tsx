@@ -315,18 +315,18 @@ function TestimonialsSection() {
 
 function CTASection() {
   return (
-    <section className="py-24 bg-primary">
+    <section className="py-24 bg-[oklch(0.65_0.2_15)]">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <Heart className="w-16 h-16 text-primary-foreground/80 mx-auto mb-6" />
-        <h2 className="text-3xl sm:text-4xl font-bold text-primary-foreground mb-4 text-balance">
+        <Heart className="w-16 h-16 text-white/80 mx-auto mb-6" />
+        <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4 text-balance">
           Ready to Find Your Person?
         </h2>
-        <p className="text-primary-foreground/80 text-lg mb-8 max-w-2xl mx-auto text-pretty">
+        <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto text-pretty">
           Join millions of singles who are already swiping their way to love. 
           Your perfect match could be just one swipe away.
         </p>
         <Link href="/signup">
-          <Button size="lg" className="bg-primary-foreground text-primary hover:bg-primary-foreground/90 px-8 py-6 text-lg">
+          <Button size="lg" className="bg-white text-[oklch(0.65_0.2_15)] hover:bg-white/90 px-8 py-6 text-lg">
             Create Free Account
             <ChevronRight className="w-5 h-5 ml-2" />
           </Button>
