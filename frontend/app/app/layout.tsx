@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Heart, Flame, Users, MessageCircle, User, Settings, Bell, ChevronLeft, ChevronRight } from "lucide-react";
 import { fetchMe, primaryPhotoUrl } from "@/lib/me";
-import { Providers } from "../providers";
 
 const navItems = [
   { href: "/app", icon: Flame, label: "Discover" },
@@ -41,7 +40,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Providers>
     <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
       <aside
@@ -167,6 +165,5 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
     </div>
-    </Providers>
   );
 }
