@@ -13,6 +13,7 @@ from .config import (
     JWT_SECRET,
 )
 from .db import close_db_pool, db_pool, open_db_pool
+from .recommendation import get_profile_embedding
 from .schemas import (
     CloudinarySignatureRequest,
     LoginRequest,
@@ -196,7 +197,7 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT gender, city
+                SELECT gender, city, embedding
                 FROM users
                 WHERE id = %s
                 LIMIT 1
@@ -210,25 +211,48 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
 
             genders = _target_genders(current_user[0])
             city = current_user[1]
+            user_embedding = current_user[2]
 
-            cur.execute(
-                """
-                SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls
-                FROM users u
-                LEFT JOIN swipes s ON u.id = s.swiped_id AND s.swiper_id = %s
-                WHERE u.id <> %s
-                  AND u.gender = ANY(%s)
-                  AND s.id IS NULL
-                ORDER BY
-                  CASE
-                    WHEN u.city IS NOT NULL AND u.city = %s THEN 0
-                    ELSE 1
-                  END,
-                  random()
-                LIMIT %s
-                """,
-                (user_id, user_id, genders, city, safe_limit),
-            )
+            # If the user has an embedding, we rank by similarity.
+            # Otherwise, we fallback to city-based random ranking.
+            if user_embedding:
+                cur.execute(
+                    """
+                    SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls
+                    FROM users u
+                    LEFT JOIN swipes s ON u.id = s.swiped_id AND s.swiper_id = %s
+                    WHERE u.id <> %s
+                      AND u.gender = ANY(%s)
+                      AND s.id IS NULL
+                    ORDER BY
+                      u.embedding <=> %s,
+                      CASE
+                        WHEN u.city IS NOT NULL AND u.city = %s THEN 0
+                        ELSE 1
+                      END
+                    LIMIT %s
+                    """,
+                    (user_id, user_id, genders, user_embedding, city, safe_limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls
+                    FROM users u
+                    LEFT JOIN swipes s ON u.id = s.swiped_id AND s.swiper_id = %s
+                    WHERE u.id <> %s
+                      AND u.gender = ANY(%s)
+                      AND s.id IS NULL
+                    ORDER BY
+                      CASE
+                        WHEN u.city IS NOT NULL AND u.city = %s THEN 0
+                        ELSE 1
+                      END,
+                      random()
+                    LIMIT %s
+                    """,
+                    (user_id, user_id, genders, city, safe_limit),
+                )
             rows = cur.fetchall()
 
     profiles = []
@@ -267,6 +291,13 @@ def swipe_action(payload: SwipeRequest, request: Request) -> dict:
 
 
 def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
+    # Generate embedding based on the new profile data
+    embedding = get_profile_embedding(
+        gender=payload.gender,
+        interests=payload.interests,
+        bio=payload.bio
+    )
+
     with db_pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -282,7 +313,8 @@ def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
                     dob = %s,
                     phone = %s,
                     interests = %s,
-                    photo_urls = %s
+                    photo_urls = %s,
+                    embedding = %s
                 WHERE id = %s
                 RETURNING id
                 """,
@@ -298,6 +330,7 @@ def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
                     payload.phone.strip(),
                     payload.interests,
                     payload.photoUrls,
+                    embedding,
                     user_id,
                 ),
             )

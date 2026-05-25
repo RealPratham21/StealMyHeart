@@ -9,3 +9,5 @@ cloudinary
 pydantic[email]
 requests
 faker
+sentence-transformers
+numpy
