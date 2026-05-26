@@ -38,3 +38,21 @@ def get_profile_embedding(gender: str, interests: List[str], bio: str) -> List[f
     """
     profile_text = generate_profile_text(gender, interests, bio)
     return get_embedding(profile_text)
+
+def update_preference_vector(current_pref: List[float], candidate_id_vector: List[float], learning_rate: float = 0.05) -> List[float]:
+    """
+    Updates the preference vector based on a 'Like' action.
+    Moves the preference vector closer to the liked profile's identity vector.
+    """
+    pref_np = np.array(current_pref)
+    candidate_np = np.array(candidate_id_vector)
+    
+    # Formula: NewPref = (1 - alpha) * OldPref + alpha * Candidate
+    new_pref = (1 - learning_rate) * pref_np + learning_rate * candidate_np
+    
+    # Normalize to keep it a unit vector (good for cosine similarity)
+    norm = np.linalg.norm(new_pref)
+    if norm > 0:
+        new_pref = new_pref / norm
+        
+    return new_pref.tolist()
