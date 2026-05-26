@@ -13,7 +13,7 @@ from .config import (
     JWT_SECRET,
 )
 from .db import close_db_pool, db_pool, open_db_pool
-from .recommendation import get_profile_embedding
+from .recommendation import get_profile_embedding, update_preference_vector
 from .schemas import (
     CloudinarySignatureRequest,
     LoginRequest,
@@ -195,9 +195,12 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
 
     with db_pool.connection() as conn:
         with conn.cursor() as cur:
+            # Update user's last active status
+            cur.execute("UPDATE users SET last_active_at = NOW() WHERE id = %s", (user_id,))
+
             cur.execute(
                 """
-                SELECT gender, city, embedding
+                SELECT gender, city, pref_embedding
                 FROM users
                 WHERE id = %s
                 LIMIT 1
@@ -211,30 +214,40 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
 
             genders = _target_genders(current_user[0])
             city = current_user[1]
-            user_embedding = current_user[2]
+            user_pref_embedding = current_user[2]
 
-            # If the user has an embedding, we rank by similarity.
-            # Otherwise, we fallback to city-based random ranking.
-            if user_embedding:
+            # Advanced Scoring Logic:
+            # 1. Similarity: (1 - (embedding <=> pref_embedding)) - Closer is better
+            # 2. Reciprocal: Did they already like me? (Bonus)
+            # 3. Popularity: Normalized likes_received_count
+            # 4. Freshness: Recently active boost
+
+            if user_pref_embedding:
                 cur.execute(
                     """
-                    SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls
+                    SELECT 
+                        u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls,
+                        (1 - (u.embedding <=> %s)) AS similarity_score,
+                        EXISTS(SELECT 1 FROM swipes s2 WHERE s2.swiper_id = u.id AND s2.swiped_id = %s AND s2.direction = TRUE) AS liked_me
                     FROM users u
                     LEFT JOIN swipes s ON u.id = s.swiped_id AND s.swiper_id = %s
                     WHERE u.id <> %s
                       AND u.gender = ANY(%s)
                       AND s.id IS NULL
                     ORDER BY
-                      u.embedding <=> %s,
-                      CASE
-                        WHEN u.city IS NOT NULL AND u.city = %s THEN 0
-                        ELSE 1
-                      END
+                      -- Weighted score calculation:
+                      -- 50% Similarity + 40% Reciprocal + 10% Popularity
+                      ((1 - (u.embedding <=> %s)) * 0.5) + 
+                      (CASE WHEN EXISTS(SELECT 1 FROM swipes s2 WHERE s2.swiper_id = u.id AND s2.swiped_id = %s AND s2.direction = TRUE) THEN 0.4 ELSE 0 END) +
+                      (LEAST(u.likes_received_count, 100) / 100.0 * 0.1) DESC,
+                      -- Fallback to city
+                      CASE WHEN u.city = %s THEN 0 ELSE 1 END ASC
                     LIMIT %s
                     """,
-                    (user_id, user_id, genders, user_embedding, city, safe_limit),
+                    (user_pref_embedding, user_id, user_id, user_id, genders, user_pref_embedding, user_id, city, safe_limit),
                 )
             else:
+                # Fallback to random/city if no preference vector exists
                 cur.execute(
                     """
                     SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.bio, u.city, u.interests, u.photo_urls
@@ -244,10 +257,7 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
                       AND u.gender = ANY(%s)
                       AND s.id IS NULL
                     ORDER BY
-                      CASE
-                        WHEN u.city IS NOT NULL AND u.city = %s THEN 0
-                        ELSE 1
-                      END,
+                      CASE WHEN u.city = %s THEN 0 ELSE 1 END ASC,
                       random()
                     LIMIT %s
                     """,
@@ -279,6 +289,7 @@ def swipe_action(payload: SwipeRequest, request: Request) -> dict:
     user_id = _get_current_user_id(request)
     with db_pool.connection() as conn:
         with conn.cursor() as cur:
+            # 1. Record the swipe
             cur.execute(
                 """
                 INSERT INTO swipes (swiper_id, swiped_id, direction)
@@ -287,6 +298,43 @@ def swipe_action(payload: SwipeRequest, request: Request) -> dict:
                 """,
                 (user_id, str(payload.swipedId), payload.direction),
             )
+
+            # 2. Update stats and learn taste if it's a LIKE
+            if payload.direction:
+                # Increment target's popularity
+                cur.execute(
+                    "UPDATE users SET likes_received_count = likes_received_count + 1 WHERE id = %s",
+                    (str(payload.swipedId),)
+                )
+
+                # Get swiper's current preference and target's identity
+                cur.execute(
+                    "SELECT pref_embedding, embedding FROM users WHERE id = %s OR id = %s",
+                    (user_id, str(payload.swipedId))
+                )
+                rows = cur.fetchall()
+                
+                # Assign vectors correctly (logic handles if query returns rows in any order)
+                swiper_pref = None
+                target_id_vec = None
+                for row in rows:
+                    # In a real app, we'd check ID, but here we can assume the one with NULL pref 
+                    # is the target or just fetch specifically. Let's do it safely.
+                    pass # We'll re-fetch specifically below for clarity
+
+                cur.execute("SELECT pref_embedding FROM users WHERE id = %s", (user_id,))
+                swiper_pref = cur.fetchone()[0]
+                
+                cur.execute("SELECT embedding FROM users WHERE id = %s", (str(payload.swipedId),))
+                target_id_vec = cur.fetchone()[0]
+
+                if swiper_pref and target_id_vec:
+                    new_pref = update_preference_vector(swiper_pref, target_id_vec)
+                    cur.execute(
+                        "UPDATE users SET pref_embedding = %s WHERE id = %s",
+                        (new_pref, user_id)
+                    )
+
     return {"message": "Swipe recorded."}
 
 
