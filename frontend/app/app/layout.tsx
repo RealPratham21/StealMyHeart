@@ -19,16 +19,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [notifications] = useState(3);
-  const [avatarSrc, setAvatarSrc] = useState("/placeholder-user.jpg");
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const refreshAvatar = () => {
-      fetchMe().then((user) => {
-        if (!cancelled && user) {
-          setAvatarSrc(primaryPhotoUrl(user));
-        }
-      });
+    const refreshAvatar = async () => {
+      const user = await fetchMe();
+      if (!cancelled) {
+        setAvatarSrc(primaryPhotoUrl(user));
+      }
     };
     refreshAvatar();
     const onProfileUpdated = () => refreshAvatar();
@@ -150,11 +149,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </button>
             
             <Link href="/app/profile" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-              <img
-                src={avatarSrc}
-                alt="Profile"
-                className="w-9 h-9 rounded-full object-cover border-2 border-primary/20"
-              />
+              {avatarSrc && (
+                <img
+                  src={avatarSrc}
+                  alt="Profile"
+                  className="w-9 h-9 rounded-full object-cover border-2 border-primary/20"
+                />
+              )}
             </Link>
           </div>
         </header>

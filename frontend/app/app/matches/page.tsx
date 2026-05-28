@@ -1,46 +1,55 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Heart, MessageCircle } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { formatDistanceToNow } from "date-fns";
 
-const matches = [
-  {
-    id: 1,
-    name: "Emma",
-    age: 26,
-    photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop",
-    matchedAt: "2 hours ago",
-    lastMessage: null,
-  },
-  {
-    id: 2,
-    name: "Sophia",
-    age: 24,
-    photo: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&h=200&fit=crop",
-    matchedAt: "Yesterday",
-    lastMessage: "Hey! How are you?",
-  },
-  {
-    id: 3,
-    name: "Olivia",
-    age: 28,
-    photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop",
-    matchedAt: "3 days ago",
-    lastMessage: "That sounds amazing!",
-  },
-  {
-    id: 4,
-    name: "Isabella",
-    age: 25,
-    photo: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&h=200&fit=crop",
-    matchedAt: "1 week ago",
-    lastMessage: null,
-  },
-];
+interface Match {
+  id: string;
+  firstName: string;
+  age: number;
+  photoUrls: string[];
+  lastMessage?: string;
+  lastMessageAt?: string;
+}
 
 export default function MatchesPage() {
-  const newMatches = matches.filter((m) => !m.lastMessage);
-  const conversations = matches.filter((m) => m.lastMessage);
+  const [newMatches, setNewMatches] = useState<Match[]>([]);
+  const [conversations, setConversations] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [matchesData, conversationsData] = await Promise.all([
+          apiFetch("/matches"),
+          apiFetch("/conversations"),
+        ]);
+        
+        // Filter out matches that already have conversations
+        const conversationIds = new Set(conversationsData.map((c: any) => c.id));
+        const filteredNewMatches = matchesData.filter((m: any) => !conversationIds.has(m.id));
+        
+        setNewMatches(filteredNewMatches);
+        setConversations(conversationsData);
+      } catch (error) {
+        console.error("Failed to fetch matches:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -60,8 +69,8 @@ export default function MatchesPage() {
               >
                 <div className="relative">
                   <img
-                    src={match.photo}
-                    alt={match.name}
+                    src={match.photoUrls?.[0] || "https://images.unsplash.com/photo-1511367461989-f85a21fda167?w=200&h=200&fit=crop"}
+                    alt={match.firstName}
                     className="w-20 h-20 rounded-full object-cover border-2 border-primary group-hover:border-4 transition-all"
                   />
                   <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-primary rounded-full flex items-center justify-center">
@@ -69,10 +78,7 @@ export default function MatchesPage() {
                   </div>
                 </div>
                 <p className="text-center mt-2 text-sm font-medium text-foreground">
-                  {match.name}
-                </p>
-                <p className="text-center text-xs text-muted-foreground">
-                  {match.matchedAt}
+                  {match.firstName}
                 </p>
               </Link>
             ))}
@@ -100,17 +106,17 @@ export default function MatchesPage() {
                 className="flex items-center gap-4 p-4 bg-card rounded-xl border border-border hover:border-primary/30 transition-all"
               >
                 <img
-                  src={match.photo}
-                  alt={match.name}
+                  src={match.photoUrls?.[0] || "https://images.unsplash.com/photo-1511367461989-f85a21fda167?w=200&h=200&fit=crop"}
+                  alt={match.firstName}
                   className="w-14 h-14 rounded-full object-cover"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="font-semibold text-foreground">
-                      {match.name}, {match.age}
+                      {match.firstName}, {match.age}
                     </h3>
                     <span className="text-xs text-muted-foreground">
-                      {match.matchedAt}
+                      {match.lastMessageAt ? formatDistanceToNow(new Date(match.lastMessageAt), { addSuffix: true }) : ""}
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground truncate">

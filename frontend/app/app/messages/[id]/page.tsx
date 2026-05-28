@@ -1,112 +1,94 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, use } from "react";
 import Link from "next/link";
 import { ArrowLeft, Send, MoreVertical, Phone, Video, Image, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { apiFetch } from "@/lib/api";
+import { fetchMe } from "@/lib/me";
 
-// Mock data - in real app this would come from your backend
-const contacts: Record<string, {
-  name: string;
-  age: number;
-  photo: string;
-  online: boolean;
-}> = {
-  "1": {
-    name: "Emma",
-    age: 26,
-    photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop",
-    online: true,
-  },
-  "2": {
-    name: "Sophia",
-    age: 24,
-    photo: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&h=200&fit=crop",
-    online: true,
-  },
-  "3": {
-    name: "Olivia",
-    age: 28,
-    photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop",
-    online: false,
-  },
-  "4": {
-    name: "Isabella",
-    age: 25,
-    photo: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&h=200&fit=crop",
-    online: false,
-  },
-};
-
-type Message = {
-  id: number;
+interface Message {
+  id: string;
   text: string;
   sender: "me" | "them";
   time: string;
-};
+}
 
-const initialMessages: Message[] = [
-  { id: 1, text: "Hey! I saw we matched. Your profile looks amazing!", sender: "them", time: "10:30 AM" },
-  { id: 2, text: "Hi! Thanks so much! I loved your photos too. That hiking pic is gorgeous!", sender: "me", time: "10:32 AM" },
-  { id: 3, text: "Thank you! That was at Yosemite. Have you been?", sender: "them", time: "10:33 AM" },
-  { id: 4, text: "Not yet but it's definitely on my bucket list! What's your favorite part about it?", sender: "me", time: "10:35 AM" },
-  { id: 5, text: "The waterfalls are incredible. We should go together sometime!", sender: "them", time: "10:36 AM" },
-];
+interface Contact {
+  id: string;
+  firstName: string;
+  age: number;
+  photoUrls: string[];
+  online: boolean;
+}
 
 export default function ChatPage({ params }: { params: Promise<{ id: string }> }) {
-  const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const resolvedParams = use(params);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [contact, setContact] = useState<Contact | null>(null);
+  const [me, setMe] = useState<any>(null);
   const [newMessage, setNewMessage] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    params.then(setResolvedParams);
-  }, [params]);
+    async function fetchData() {
+      try {
+        const [meData, messagesData, matchesData] = await Promise.all([
+          fetchMe(),
+          apiFetch(`/messages/${resolvedParams.id}`),
+          apiFetch("/matches"),
+        ]);
+        
+        setMe(meData);
+        
+        // Find contact info from matches
+        const contactInfo = matchesData.find((m: any) => m.id === resolvedParams.id);
+        if (contactInfo) {
+          setContact({
+            id: contactInfo.id,
+            firstName: contactInfo.firstName,
+            age: contactInfo.age,
+            photoUrls: contactInfo.photoUrls,
+            online: true, // Simplified for now
+          });
+        }
+
+        // Map backend messages to frontend format
+        const mappedMessages = messagesData.map((m: any, idx: number) => ({
+          id: idx.toString(),
+          text: m.content,
+          sender: m.senderId === meData.id ? "me" : "them",
+          time: new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        }));
+        
+        setMessages(mappedMessages);
+      } catch (error) {
+        console.error("Failed to fetch chat data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, [resolvedParams.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  if (!resolvedParams) {
+  if (loading || !contact) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
       </div>
     );
   }
 
-  const contact = contacts[resolvedParams.id] || contacts["1"];
-
   const handleSend = () => {
     if (!newMessage.trim()) return;
-
-    const message: Message = {
-      id: messages.length + 1,
-      text: newMessage,
-      sender: "me",
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-
-    setMessages([...messages, message]);
+    // Messaging implementation skipped as requested
     setNewMessage("");
-
-    // Simulate reply
-    setTimeout(() => {
-      const replies = [
-        "That sounds great!",
-        "I'd love that!",
-        "Tell me more about yourself!",
-        "You're so sweet!",
-      ];
-      const reply: Message = {
-        id: messages.length + 2,
-        text: replies[Math.floor(Math.random() * replies.length)],
-        sender: "them",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      };
-      setMessages((prev) => [...prev, reply]);
-    }, 1500);
   };
 
   return (
@@ -123,8 +105,8 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
           
           <div className="relative">
             <img
-              src={contact.photo}
-              alt={contact.name}
+              src={contact.photoUrls?.[0] || "https://images.unsplash.com/photo-1511367461989-f85a21fda167?w=200&h=200&fit=crop"}
+              alt={contact.firstName}
               className="w-10 h-10 rounded-full object-cover"
             />
             {contact.online && (
@@ -134,7 +116,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
           
           <div>
             <h2 className="font-semibold text-foreground">
-              {contact.name}, {contact.age}
+              {contact.firstName}, {contact.age}
             </h2>
             <p className="text-xs text-muted-foreground">
               {contact.online ? "Online now" : "Last seen recently"}
@@ -161,7 +143,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         <div className="text-center py-4">
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-sm">
             <Heart className="w-4 h-4 fill-primary" />
-            You matched with {contact.name}!
+            You matched with {contact.firstName}!
           </div>
         </div>
 

@@ -236,7 +236,7 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
                       AND s.id IS NULL
                     ORDER BY
                       -- Weighted score calculation:
-                      -- 50% Similarity + 40% Reciprocal + 10% Popularity
+                      -- 50%% Similarity + 40%% Reciprocal + 10%% Popularity
                       ((1 - (u.embedding <=> %s)) * 0.5) + 
                       (CASE WHEN EXISTS(SELECT 1 FROM swipes s2 WHERE s2.swiper_id = u.id AND s2.swiped_id = %s AND s2.direction = TRUE) THEN 0.4 ELSE 0 END) +
                       (LEAST(u.likes_received_count, 100) / 100.0 * 0.1) DESC,
@@ -284,58 +284,148 @@ def swipe_profiles(request: Request, limit: int = 10) -> dict:
     return {"profiles": profiles}
 
 
-@app.post("/api/swipe/action")
-def swipe_action(payload: SwipeRequest, request: Request) -> dict:
+@app.get("/api/matches")
+def get_matches(request: Request) -> list:
     user_id = _get_current_user_id(request)
     with db_pool.connection() as conn:
         with conn.cursor() as cur:
-            # 1. Record the swipe
+            # Mutual matches: A liked B and B liked A
             cur.execute(
                 """
-                INSERT INTO swipes (swiper_id, swiped_id, direction)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (swiper_id, swiped_id) DO NOTHING
+                SELECT u.id, u.first_name, u.full_name, u.age, u.gender, u.city, u.interests, u.photo_urls
+                FROM users u
+                JOIN swipes s1 ON s1.swiped_id = u.id AND s1.swiper_id = %s AND s1.direction = TRUE
+                JOIN swipes s2 ON s2.swiper_id = u.id AND s2.swiped_id = %s AND s2.direction = TRUE
+                ORDER BY s1.created_at DESC
+                LIMIT 20
                 """,
-                (user_id, str(payload.swipedId), payload.direction),
+                (user_id, user_id),
             )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "firstName": r[1],
+                    "fullName": r[2],
+                    "age": r[3],
+                    "gender": r[4],
+                    "city": r[5],
+                    "interests": r[6],
+                    "photoUrls": r[7],
+                }
+                for r in rows
+            ]
 
-            # 2. Update stats and learn taste if it's a LIKE
-            if payload.direction:
-                # Increment target's popularity
+@app.get("/api/conversations")
+def get_conversations(request: Request) -> list:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            # Get latest message for each match
+            cur.execute(
+                """
+                WITH latest_msgs AS (
+                    SELECT 
+                        CASE WHEN sender_id = %s THEN receiver_id ELSE sender_id END as other_user_id,
+                        content,
+                        created_at,
+                        ROW_NUMBER() OVER(PARTITION BY CASE WHEN sender_id = %s THEN receiver_id ELSE sender_id END ORDER BY created_at DESC) as rn
+                    FROM messages
+                    WHERE sender_id = %s OR receiver_id = %s
+                )
+                SELECT 
+                    u.id, u.first_name, u.photo_urls, u.age,
+                    lm.content, lm.created_at
+                FROM latest_msgs lm
+                JOIN users u ON u.id = lm.other_user_id
+                WHERE lm.rn = 1
+                ORDER BY lm.created_at DESC
+                """,
+                (user_id, user_id, user_id, user_id),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "firstName": r[1],
+                    "photoUrls": r[2],
+                    "age": r[3],
+                    "lastMessage": r[4],
+                    "lastMessageAt": r[5].isoformat() if r[5] else None,
+                }
+                for r in rows
+            ]
+
+@app.get("/api/messages/{other_user_id}")
+def get_messages(other_user_id: str, request: Request) -> list:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT sender_id, content, created_at
+                FROM messages
+                WHERE (sender_id = %s AND receiver_id = %s)
+                   OR (sender_id = %s AND receiver_id = %s)
+                ORDER BY created_at ASC
+                """,
+                (user_id, other_user_id, other_user_id, user_id),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "senderId": r[0],
+                    "content": r[1],
+                    "createdAt": r[2].isoformat(),
+                }
+                for r in rows
+            ]
+
+@app.post("/api/swipe/action")
+def swipe_action(payload: SwipeRequest, request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    try:
+        with db_pool.connection() as conn:
+            with conn.cursor() as cur:
+                # 1. Record the swipe (Upsert: update if already exists)
                 cur.execute(
-                    "UPDATE users SET likes_received_count = likes_received_count + 1 WHERE id = %s",
-                    (str(payload.swipedId),)
+                    """
+                    INSERT INTO swipes (swiper_id, swiped_id, direction)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (swiper_id, swiped_id) 
+                    DO UPDATE SET direction = EXCLUDED.direction, created_at = NOW()
+                    """,
+                    (user_id, str(payload.swipedId), payload.direction),
                 )
 
-                # Get swiper's current preference and target's identity
-                cur.execute(
-                    "SELECT pref_embedding, embedding FROM users WHERE id = %s OR id = %s",
-                    (user_id, str(payload.swipedId))
-                )
-                rows = cur.fetchall()
-                
-                # Assign vectors correctly (logic handles if query returns rows in any order)
-                swiper_pref = None
-                target_id_vec = None
-                for row in rows:
-                    # In a real app, we'd check ID, but here we can assume the one with NULL pref 
-                    # is the target or just fetch specifically. Let's do it safely.
-                    pass # We'll re-fetch specifically below for clarity
-
-                cur.execute("SELECT pref_embedding FROM users WHERE id = %s", (user_id,))
-                swiper_pref = cur.fetchone()[0]
-                
-                cur.execute("SELECT embedding FROM users WHERE id = %s", (str(payload.swipedId),))
-                target_id_vec = cur.fetchone()[0]
-
-                if swiper_pref and target_id_vec:
-                    new_pref = update_preference_vector(swiper_pref, target_id_vec)
+                # 2. Update stats and learn taste if it's a LIKE
+                if payload.direction:
+                    # Increment target's popularity
                     cur.execute(
-                        "UPDATE users SET pref_embedding = %s WHERE id = %s",
-                        (new_pref, user_id)
+                        "UPDATE users SET likes_received_count = likes_received_count + 1 WHERE id = %s",
+                        (str(payload.swipedId),)
                     )
 
-    return {"message": "Swipe recorded."}
+                    # Get swiper's current preference
+                    cur.execute("SELECT pref_embedding FROM users WHERE id = %s", (user_id,))
+                    swiper_row = cur.fetchone()
+                    swiper_pref = swiper_row[0] if swiper_row else None
+                    
+                    # Get target's identity embedding
+                    cur.execute("SELECT embedding FROM users WHERE id = %s", (str(payload.swipedId),))
+                    target_row = cur.fetchone()
+                    target_id_vec = target_row[0] if target_row else None
+
+                    if swiper_pref and target_id_vec:
+                        new_pref = update_preference_vector(swiper_pref, target_id_vec)
+                        cur.execute(
+                            "UPDATE users SET pref_embedding = %s WHERE id = %s",
+                            (new_pref, user_id)
+                        )
+        return {"message": "Swipe recorded."}
+    except Exception as e:
+        print(f"Error recording swipe: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error while recording swipe.")
 
 
 def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
