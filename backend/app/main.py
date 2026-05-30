@@ -321,10 +321,16 @@ def get_conversations(request: Request) -> list:
     user_id = _get_current_user_id(request)
     with db_pool.connection() as conn:
         with conn.cursor() as cur:
-            # Get latest message for each match
+            # Get all mutual matches and their latest message if it exists
             cur.execute(
                 """
-                WITH latest_msgs AS (
+                WITH mutual_matches AS (
+                    SELECT u.id, u.first_name, u.photo_urls, u.age
+                    FROM users u
+                    JOIN swipes s1 ON s1.swiped_id = u.id AND s1.swiper_id = %s AND s1.direction = TRUE
+                    JOIN swipes s2 ON s2.swiper_id = u.id AND s2.swiped_id = %s AND s2.direction = TRUE
+                ),
+                latest_msgs AS (
                     SELECT 
                         CASE WHEN sender_id = %s THEN receiver_id ELSE sender_id END as other_user_id,
                         content,
@@ -334,14 +340,13 @@ def get_conversations(request: Request) -> list:
                     WHERE sender_id = %s OR receiver_id = %s
                 )
                 SELECT 
-                    u.id, u.first_name, u.photo_urls, u.age,
+                    mm.id, mm.first_name, mm.photo_urls, mm.age,
                     lm.content, lm.created_at
-                FROM latest_msgs lm
-                JOIN users u ON u.id = lm.other_user_id
-                WHERE lm.rn = 1
-                ORDER BY lm.created_at DESC
+                FROM mutual_matches mm
+                LEFT JOIN latest_msgs lm ON lm.other_user_id = mm.id AND lm.rn = 1
+                ORDER BY COALESCE(lm.created_at, '1970-01-01') DESC, mm.first_name ASC
                 """,
-                (user_id, user_id, user_id, user_id),
+                (user_id, user_id, user_id, user_id, user_id, user_id),
             )
             rows = cur.fetchall()
             return [
