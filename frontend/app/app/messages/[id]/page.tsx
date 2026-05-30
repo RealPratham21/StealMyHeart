@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
 import { fetchMe } from "@/lib/me";
+import { useChat } from "@/hooks/useChat";
 
 interface Message {
   id: string;
@@ -25,12 +26,13 @@ interface Contact {
 
 export default function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [contact, setContact] = useState<Contact | null>(null);
   const [me, setMe] = useState<any>(null);
   const [newMessage, setNewMessage] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
+
+  const { messages, setMessages, sendMessage } = useChat(me?.id, resolvedParams.id);
 
   useEffect(() => {
     async function fetchData() {
@@ -56,11 +58,12 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         }
 
         // Map backend messages to frontend format
-        const mappedMessages = messagesData.map((m: any, idx: number) => ({
-          id: idx.toString(),
-          text: m.content,
-          sender: m.senderId === meData.id ? "me" : "them",
-          time: new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        const mappedMessages = messagesData.map((m: any) => ({
+          id: m.id || Math.random().toString(),
+          sender_id: m.senderId,
+          receiver_id: m.receiver_id || resolvedParams.id, // Fallback for historical data
+          content: m.content,
+          created_at: m.createdAt,
         }));
         
         setMessages(mappedMessages);
@@ -71,7 +74,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       }
     }
     fetchData();
-  }, [resolvedParams.id]);
+  }, [resolvedParams.id, setMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -87,7 +90,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
 
   const handleSend = () => {
     if (!newMessage.trim()) return;
-    // Messaging implementation skipped as requested
+    sendMessage(newMessage);
     setNewMessage("");
   };
 
@@ -150,22 +153,22 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`flex ${message.sender === "me" ? "justify-end" : "justify-start"}`}
+            className={`flex ${message.sender_id === me.id ? "justify-end" : "justify-start"}`}
           >
             <div
               className={`max-w-[75%] px-4 py-2 rounded-2xl ${
-                message.sender === "me"
+                message.sender_id === me.id
                   ? "bg-primary text-primary-foreground rounded-br-md"
                   : "bg-muted text-foreground rounded-bl-md"
               }`}
             >
-              <p>{message.text}</p>
+              <p>{message.content}</p>
               <p
                 className={`text-xs mt-1 ${
-                  message.sender === "me" ? "text-primary-foreground/70" : "text-muted-foreground"
+                  message.sender_id === me.id ? "text-primary-foreground/70" : "text-muted-foreground"
                 }`}
               >
-                {message.time}
+                {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
           </div>

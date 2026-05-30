@@ -1,6 +1,9 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8001/api";
 
+export const WS_BASE_URL = 
+  API_BASE_URL.replace("http://", "ws://").replace("https://", "wss://").replace("/api", "/ws");
+
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE_URL}${endpoint}`;
   
