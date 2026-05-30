@@ -1,59 +1,51 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { apiFetch } from "@/lib/api";
+import { formatDistanceToNow } from "date-fns";
 
-const conversations = [
-  {
-    id: 1,
-    name: "Emma",
-    age: 26,
-    photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop",
-    lastMessage: "Hey! How was your day?",
-    time: "2m ago",
-    unread: true,
-    online: true,
-  },
-  {
-    id: 2,
-    name: "Sophia",
-    age: 24,
-    photo: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&h=200&fit=crop",
-    lastMessage: "That restaurant looks amazing! Let's go this weekend.",
-    time: "1h ago",
-    unread: false,
-    online: true,
-  },
-  {
-    id: 3,
-    name: "Olivia",
-    age: 28,
-    photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop",
-    lastMessage: "You: I had a great time yesterday!",
-    time: "3h ago",
-    unread: false,
-    online: false,
-  },
-  {
-    id: 4,
-    name: "Isabella",
-    age: 25,
-    photo: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200&h=200&fit=crop",
-    lastMessage: "Can't wait to see you again!",
-    time: "Yesterday",
-    unread: false,
-    online: false,
-  },
-];
+interface Conversation {
+  id: string;
+  firstName: string;
+  age: number;
+  photoUrls: string[];
+  lastMessage?: string;
+  lastMessageAt?: string;
+}
 
 export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchConversations() {
+      try {
+        const data = await apiFetch("/conversations");
+        setConversations(data);
+      } catch (error) {
+        console.error("Failed to fetch conversations:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchConversations();
+  }, []);
 
   const filteredConversations = conversations.filter((conv) =>
-    conv.name.toLowerCase().includes(searchQuery.toLowerCase())
+    conv.firstName.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -75,38 +67,30 @@ export default function MessagesPage() {
             <Link
               key={conv.id}
               href={`/app/messages/${conv.id}`}
-              className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${
-                conv.unread
-                  ? "bg-primary/5 border-primary/20 hover:border-primary/40"
-                  : "bg-card border-border hover:border-primary/30"
-              }`}
+              className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:border-primary/30 transition-all"
             >
               <div className="relative">
                 <img
-                  src={conv.photo}
-                  alt={conv.name}
+                  src={conv.photoUrls?.[0] || "https://images.unsplash.com/photo-1511367461989-f85a21fda167?w=200&h=200&fit=crop"}
+                  alt={conv.firstName}
                   className="w-14 h-14 rounded-full object-cover"
                 />
-                {conv.online && (
-                  <span className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-background rounded-full" />
-                )}
+                <span className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-background rounded-full" />
               </div>
               
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
-                  <h3 className={`font-semibold ${conv.unread ? "text-foreground" : "text-foreground"}`}>
-                    {conv.name}, {conv.age}
+                  <h3 className="font-semibold text-foreground">
+                    {conv.firstName}, {conv.age}
                   </h3>
-                  <span className="text-xs text-muted-foreground">{conv.time}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {conv.lastMessageAt ? formatDistanceToNow(new Date(conv.lastMessageAt), { addSuffix: true }) : "Just matched"}
+                  </span>
                 </div>
-                <p className={`text-sm truncate ${conv.unread ? "text-foreground font-medium" : "text-muted-foreground"}`}>
-                  {conv.lastMessage}
+                <p className="text-sm truncate text-muted-foreground">
+                  {conv.lastMessage || "Matched! Send a message ✨"}
                 </p>
               </div>
-              
-              {conv.unread && (
-                <div className="w-3 h-3 bg-primary rounded-full flex-shrink-0" />
-              )}
             </Link>
           ))}
         </div>

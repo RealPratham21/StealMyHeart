@@ -1,8 +1,8 @@
-import hashlib
+import json
 import uuid
 from datetime import datetime, timezone
 import cloudinary
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from .auth import create_access_token, decode_access_token, hash_password, verify_password
 from .config import (
@@ -30,6 +30,23 @@ if CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
     )
 
 app = FastAPI(title="StealMyHeart Backend")
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str, WebSocket] = {}
+
+    async def connect(self, user_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+
+    def disconnect(self, user_id: str):
+        self.active_connections.pop(user_id, None)
+
+    async def send_personal_message(self, message: dict, user_id: str):
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
+
+manager = ConnectionManager()
 
 app.add_middleware(
     CORSMiddleware,
@@ -431,6 +448,52 @@ def swipe_action(payload: SwipeRequest, request: Request) -> dict:
     except Exception as e:
         print(f"Error recording swipe: {e}")
         raise HTTPException(status_code=500, detail="Internal server error while recording swipe.")
+
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(user_id, websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message_data = json.loads(data)
+            
+            receiver_id = message_data.get("receiver_id")
+            content = message_data.get("content")
+            
+            if receiver_id and content:
+                # Save to database
+                with db_pool.connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO messages (sender_id, receiver_id, content)
+                            VALUES (%s, %s, %s)
+                            RETURNING id, created_at
+                            """,
+                            (user_id, receiver_id, content)
+                        )
+                        row = cur.fetchone()
+                        msg_id, created_at = row[0], row[1]
+                        conn.commit()
+
+                # Push to receiver if online
+                push_data = {
+                    "id": str(msg_id),
+                    "sender_id": user_id,
+                    "receiver_id": receiver_id,
+                    "content": content,
+                    "created_at": created_at.isoformat()
+                }
+                await manager.send_personal_message(push_data, receiver_id)
+                # Echo back to sender to confirm delivery/update UI
+                await manager.send_personal_message(push_data, user_id)
+
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        manager.disconnect(user_id)
 
 
 def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
