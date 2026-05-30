@@ -28,9 +28,8 @@ export default function MatchesPage() {
           apiFetch("/conversations"),
         ]);
         
-        // Filter out matches that already have conversations
-        const conversationIds = new Set(conversationsData.map((c: any) => c.id));
-        const filteredNewMatches = matchesData.filter((m: any) => !conversationIds.has(m.id));
+        // New matches are those without any messages yet
+        const filteredNewMatches = conversationsData.filter((m: any) => !m.lastMessage);
         
         setNewMatches(filteredNewMatches);
         setConversations(conversationsData);
@@ -120,7 +119,7 @@ export default function MatchesPage() {
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground truncate">
-                    {match.lastMessage}
+                    {match.lastMessage || "Matched! Send a message ✨"}
                   </p>
                 </div>
                 <MessageCircle className="w-5 h-5 text-muted-foreground" />
