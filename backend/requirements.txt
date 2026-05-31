@@ -4,6 +4,7 @@ psycopg[binary]
 psycopg_pool
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt==4.0.1
 python-dotenv
 cloudinary
 pydantic[email]
