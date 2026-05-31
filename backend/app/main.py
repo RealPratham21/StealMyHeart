@@ -57,6 +57,11 @@ app.add_middleware(
 )
 
 
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"status": "ok"}
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     if not JWT_SECRET:
