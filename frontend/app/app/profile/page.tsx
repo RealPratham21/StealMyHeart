@@ -113,7 +113,7 @@ export default function ProfilePage() {
           state: editedProfile.state.trim(),
           country: editedProfile.country.trim(),
           phone: editedProfile.phone.trim(),
-          dob: editedProfile.dob,
+          dob: editedProfile.dob || null,
           interests: editedProfile.interests,
           photoUrls: editedProfile.photos,
         }),

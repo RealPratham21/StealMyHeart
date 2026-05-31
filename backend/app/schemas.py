@@ -21,9 +21,9 @@ class OnboardingRequest(BaseModel):
     gender: Literal["man", "woman", "other"]
     bio: str = Field(min_length=10, max_length=500)
     city: str = Field(min_length=2, max_length=120)
-    state: str | None = Field(default=None, min_length=2, max_length=120)
-    country: str | None = Field(default=None, min_length=2, max_length=120)
-    phone: str | None = Field(default=None, min_length=7, max_length=30)
+    state: str | None = Field(default=None, max_length=120)
+    country: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=30)
     dob: date | None = None
     interests: list[str] = Field(min_length=3, max_length=5)
     photoUrls: list[str] = Field(min_length=1, max_length=6)
