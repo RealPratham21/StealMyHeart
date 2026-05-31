@@ -22,6 +22,10 @@ type EditableProfile = {
   age: number;
   gender: Gender;
   location: string;
+  state: string;
+  country: string;
+  dob: string;
+  phone: string;
   bio: string;
   photos: string[];
   interests: string[];
@@ -37,6 +41,10 @@ function userToEditable(user: MeUser): EditableProfile {
     age: user.age ?? 18,
     gender: (user.gender as Gender) || "man",
     location: user.city?.trim() || "",
+    state: user.state?.trim() || "",
+    country: user.country?.trim() || "",
+    dob: user.dob || "",
+    phone: user.phone || "",
     bio: user.bio?.trim() || "",
     photos: [...(user.photo_urls ?? [])].slice(0, 6),
     interests: [...(user.interests ?? [])],
@@ -102,6 +110,10 @@ export default function ProfilePage() {
           gender: editedProfile.gender,
           bio: editedProfile.bio.trim(),
           city: editedProfile.location.trim(),
+          state: editedProfile.state.trim(),
+          country: editedProfile.country.trim(),
+          phone: editedProfile.phone.trim(),
+          dob: editedProfile.dob,
           interests: editedProfile.interests,
           photoUrls: editedProfile.photos,
         }),
