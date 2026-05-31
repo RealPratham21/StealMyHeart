@@ -9,6 +9,10 @@ export type MeUser = {
   gender: string | null;
   bio: string | null;
   city: string | null;
+  state: string | null;
+  country: string | null;
+  dob: string | null;
+  phone: string | null;
   interests: string[] | null;
   photo_urls: string[] | null;
 };

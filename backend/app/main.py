@@ -530,6 +530,21 @@ def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
 
     with db_pool.connection() as conn:
         with conn.cursor() as cur:
+            # Fetch current data to preserve fields not present in payload (partial updates)
+            cur.execute(
+                "SELECT state, country, dob, phone FROM users WHERE id = %s",
+                (user_id,)
+            )
+            current = cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="User not found.")
+            
+            # Use payload value if provided, otherwise keep existing
+            state = payload.state if payload.state is not None else current[0]
+            country = payload.country if payload.country is not None else current[1]
+            dob = payload.dob if payload.dob is not None else current[2]
+            phone = payload.phone if payload.phone is not None else current[3]
+
             cur.execute(
                 """
                 UPDATE users
@@ -554,10 +569,10 @@ def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
                     payload.gender,
                     payload.bio.strip(),
                     payload.city.strip(),
-                    payload.state.strip(),
-                    payload.country.strip(),
-                    payload.dob,
-                    payload.phone.strip(),
+                    state.strip() if state else None,
+                    country.strip() if country else None,
+                    dob,
+                    phone.strip() if phone else None,
                     payload.interests,
                     payload.photoUrls,
                     embedding,
