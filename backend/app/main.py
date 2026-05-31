@@ -89,7 +89,10 @@ def _get_token_from_cookie(request: Request) -> str:
 
 def _get_current_user_id(request: Request) -> str:
     token = _get_token_from_cookie(request)
-    payload = decode_access_token(token)
+    try:
+        payload = decode_access_token(token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized.")
@@ -127,12 +130,14 @@ def signup(payload: SignupRequest, response: Response) -> dict:
             row = cur.fetchone()
 
     token = create_access_token(str(row[0]), str(row[1]))
+    # Production-ready cookie settings for cross-domain auth
+    is_production = "localhost" not in FRONTEND_ORIGIN
     response.set_cookie(
         key="auth_token",
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=False,
+        samesite="none" if is_production else "lax",
+        secure=is_production,
         max_age=60 * 60 * 24 * 7,
         path="/",
     )
@@ -159,12 +164,14 @@ def login(payload: LoginRequest, response: Response) -> dict:
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     token = create_access_token(str(row[0]), str(row[1]))
+    # Production-ready cookie settings for cross-domain auth
+    is_production = "localhost" not in FRONTEND_ORIGIN
     response.set_cookie(
         key="auth_token",
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=False,
+        samesite="none" if is_production else "lax",
+        secure=is_production,
         max_age=60 * 60 * 24 * 7,
         path="/",
     )
@@ -212,7 +219,13 @@ def me(request: Request) -> dict:
 
 @app.post("/api/auth/logout")
 def logout(response: Response) -> dict:
-    response.delete_cookie("auth_token", path="/")
+    is_production = "localhost" not in FRONTEND_ORIGIN
+    response.delete_cookie(
+        "auth_token", 
+        path="/",
+        samesite="none" if is_production else "lax",
+        secure=is_production
+    )
     return {"message": "Logged out."}
 
 
