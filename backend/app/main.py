@@ -1,3 +1,4 @@
+import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -48,9 +49,14 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Configure CORS
+origins = [FRONTEND_ORIGIN]
+if "," in FRONTEND_ORIGIN:
+    origins = [o.strip() for o in FRONTEND_ORIGIN.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
