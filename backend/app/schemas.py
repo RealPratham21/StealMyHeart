@@ -36,3 +36,14 @@ class CloudinarySignatureRequest(BaseModel):
 class SwipeRequest(BaseModel):
     swipedId: UUID
     direction: bool  # TRUE = like, FALSE = pass
+
+
+class NotificationResponse(BaseModel):
+    id: UUID
+    type: str
+    title: str | None
+    body: str | None
+    link: str | None
+    is_read: bool
+    created_at: str
+    metadata: dict | None

@@ -34,18 +34,63 @@ app = FastAPI(title="StealMyHeart Backend")
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: dict[str, WebSocket] = {}
+        self.active_connections: dict[str, list[WebSocket]] = {}
 
     async def connect(self, user_id: str, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections[user_id] = websocket
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
 
-    def disconnect(self, user_id: str):
-        self.active_connections.pop(user_id, None)
+    def disconnect(self, user_id: str, websocket: WebSocket):
+        if user_id in self.active_connections:
+            self.active_connections[user_id].remove(websocket)
+            if not self.active_connections[user_id]:
+                self.active_connections.pop(user_id)
 
     async def send_personal_message(self, message: dict, user_id: str):
         if user_id in self.active_connections:
-            await self.active_connections[user_id].send_json(message)
+            for connection in self.active_connections[user_id]:
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    # Connection might be closed
+                    pass
+
+async def create_and_push_notification(
+    user_id: str,
+    notif_type: str,
+    title: str,
+    body: str,
+    link: str = None,
+    metadata: dict = None
+):
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO notifications (user_id, type, title, body, link, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at
+                """,
+                (user_id, notif_type, title, body, link, json.dumps(metadata) if metadata else None)
+            )
+            row = cur.fetchone()
+            notif_id, created_at = row[0], row[1]
+            conn.commit()
+
+    push_data = {
+        "id": str(notif_id),
+        "type": "notification",
+        "notif_type": notif_type,
+        "title": title,
+        "body": body,
+        "link": link,
+        "is_read": False,
+        "created_at": created_at.isoformat(),
+        "metadata": metadata
+    }
+    await manager.send_personal_message(push_data, user_id)
 
 manager = ConnectionManager()
 
@@ -428,7 +473,7 @@ def get_messages(other_user_id: str, request: Request) -> list:
             ]
 
 @app.post("/api/swipe/action")
-def swipe_action(payload: SwipeRequest, request: Request) -> dict:
+async def swipe_action(payload: SwipeRequest, request: Request) -> dict:
     user_id = _get_current_user_id(request)
     try:
         with db_pool.connection() as conn:
@@ -446,6 +491,40 @@ def swipe_action(payload: SwipeRequest, request: Request) -> dict:
 
                 # 2. Update stats and learn taste if it's a LIKE
                 if payload.direction:
+                    # Check if it's a mutual match
+                    cur.execute(
+                        "SELECT direction FROM swipes WHERE swiper_id = %s AND swiped_id = %s",
+                        (str(payload.swipedId), user_id)
+                    )
+                    other_swipe = cur.fetchone()
+                    if other_swipe and other_swipe[0]:
+                        # It's a match!
+                        # Get user info for notifications
+                        cur.execute("SELECT first_name, photo_urls FROM users WHERE id = %s", (user_id,))
+                        user_info = cur.fetchone()
+                        cur.execute("SELECT first_name, photo_urls FROM users WHERE id = %s", (str(payload.swipedId),))
+                        target_info = cur.fetchone()
+
+                        if user_info and target_info:
+                            # Notify target user
+                            await create_and_push_notification(
+                                user_id=str(payload.swipedId),
+                                notif_type="match",
+                                title="New Match! ✨",
+                                body=f"You and {user_info[0]} liked each other!",
+                                link="/app/matches",
+                                metadata={"other_user_id": user_id, "photo_url": user_info[1][0] if user_info[1] else None}
+                            )
+                            # Notify current user
+                            await create_and_push_notification(
+                                user_id=user_id,
+                                notif_type="match",
+                                title="New Match! ✨",
+                                body=f"You and {target_info[0]} liked each other!",
+                                link="/app/matches",
+                                metadata={"other_user_id": str(payload.swipedId), "photo_url": target_info[1][0] if target_info[1] else None}
+                            )
+
                     # Increment target's popularity
                     cur.execute(
                         "UPDATE users SET likes_received_count = likes_received_count + 1 WHERE id = %s",
@@ -513,11 +592,28 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 # Echo back to sender to confirm delivery/update UI
                 await manager.send_personal_message(push_data, user_id)
 
+                # Create a persistent notification for the receiver
+                # Get sender info
+                with db_pool.connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT first_name, photo_urls FROM users WHERE id = %s", (user_id,))
+                        sender_info = cur.fetchone()
+                
+                if sender_info:
+                    await create_and_push_notification(
+                        user_id=receiver_id,
+                        notif_type="message",
+                        title=f"New Message from {sender_info[0]}",
+                        body=content[:50] + ("..." if len(content) > 50 else ""),
+                        link=f"/app/messages/{user_id}",
+                        metadata={"sender_id": user_id, "photo_url": sender_info[1][0] if sender_info[1] else None}
+                    )
+
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
+        manager.disconnect(user_id, websocket)
     except Exception as e:
         print(f"WebSocket error: {e}")
-        manager.disconnect(user_id)
+        manager.disconnect(user_id, websocket)
 
 
 def _apply_profile_update(user_id: str, payload: OnboardingRequest) -> None:
@@ -597,6 +693,63 @@ def update_profile(payload: OnboardingRequest, request: Request) -> dict:
     user_id = _get_current_user_id(request)
     _apply_profile_update(user_id, payload)
     return {"message": "Profile updated."}
+
+
+@app.get("/api/notifications")
+def get_notifications(request: Request) -> list:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, type, title, body, link, is_read, created_at, metadata
+                FROM notifications
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 50
+                """,
+                (user_id,)
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": str(r[0]),
+                    "type": r[1],
+                    "title": r[2],
+                    "body": r[3],
+                    "link": r[4],
+                    "is_read": r[5],
+                    "created_at": r[6].isoformat(),
+                    "metadata": r[7]
+                }
+                for r in rows
+            ]
+
+
+@app.patch("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE notifications SET is_read = TRUE WHERE id = %s AND user_id = %s",
+                (notification_id, user_id)
+            )
+            conn.commit()
+    return {"message": "Notification marked as read."}
+
+
+@app.patch("/api/notifications/read-all")
+def mark_all_notifications_read(request: Request) -> dict:
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE notifications SET is_read = TRUE WHERE user_id = %s AND is_read = FALSE",
+                (user_id,)
+            )
+            conn.commit()
+    return {"message": "All notifications marked as read."}
 
 
 @app.post("/api/uploads/signature")
