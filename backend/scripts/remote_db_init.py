@@ -69,10 +69,49 @@ def run_remote_init():
                     );
                 """)
 
+                # 007 - Notifications table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS notifications (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        type TEXT NOT NULL,
+                        title TEXT,
+                        body TEXT,
+                        link TEXT,
+                        is_read BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        metadata JSONB
+                    );
+                """)
+
+                print("Creating triggers...")
+                cur.execute("""
+                    CREATE OR REPLACE FUNCTION set_updated_at()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                      NEW.updated_at = NOW();
+                      RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'users_set_updated_at') THEN
+                            CREATE TRIGGER users_set_updated_at
+                            BEFORE UPDATE ON users
+                            FOR EACH ROW
+                            EXECUTE FUNCTION set_updated_at();
+                        END IF;
+                    END $$;
+                """)
+
                 print("Creating indexes...")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_users_embedding ON users USING hnsw (embedding vector_cosine_ops);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_users_pref_embedding ON users USING hnsw (pref_embedding vector_cosine_ops);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages (sender_id, receiver_id, created_at);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);")
 
                 conn.commit()
                 print("Remote initialization complete!")

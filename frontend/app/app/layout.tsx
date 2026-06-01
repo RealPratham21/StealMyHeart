@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Heart, Flame, Users, MessageCircle, User, Settings, Bell, ChevronLeft, ChevronRight } from "lucide-react";
 import { fetchMe, primaryPhotoUrl } from "@/lib/me";
+import { apiFetch, WS_BASE_URL } from "@/lib/api";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import NotificationTray, { Notification } from "@/components/NotificationTray";
 
 const navItems = [
   { href: "/app", icon: Flame, label: "Discover" },
@@ -18,25 +21,77 @@ const navItems = [
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
-  const [notifications] = useState(3);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const data = await apiFetch("/notifications");
+      setNotifications(data);
+    } catch (err) {
+      console.error("Failed to fetch notifications:", err);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const refreshAvatar = async () => {
       const user = await fetchMe();
-      if (!cancelled) {
+      if (!cancelled && user) {
         setAvatarSrc(primaryPhotoUrl(user));
+        
+        // Connect WebSocket once we have user ID
+        if (!wsRef.current) {
+          const ws = new WebSocket(`${WS_BASE_URL}/${user.id}`);
+          ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "notification") {
+              setNotifications(prev => [data, ...prev]);
+            }
+          };
+          ws.onclose = () => {
+            wsRef.current = null;
+          };
+          wsRef.current = ws;
+        }
       }
     };
     refreshAvatar();
+    fetchNotifications();
+
     const onProfileUpdated = () => refreshAvatar();
     window.addEventListener("stealmyheart:profile-updated", onProfileUpdated);
+    
     return () => {
       cancelled = true;
       window.removeEventListener("stealmyheart:profile-updated", onProfileUpdated);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
-  }, []);
+  }, [fetchNotifications]);
+
+  const markRead = async (id: string) => {
+    try {
+      await apiFetch(`/notifications/${id}/read`, { method: "PATCH" });
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    } catch (err) {
+      console.error("Failed to mark notification as read:", err);
+    }
+  };
+
+  const markAllRead = async () => {
+    try {
+      await apiFetch("/notifications/read-all", { method: "PATCH" });
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    } catch (err) {
+      console.error("Failed to mark all notifications as read:", err);
+    }
+  };
+
+  const unreadCount = notifications.filter(n => !n.is_read).length;
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -139,14 +194,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-4">
-            <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors">
-              <Bell className="w-5 h-5" />
-              {notifications > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-primary text-primary-foreground text-xs rounded-full flex items-center justify-center">
-                  {notifications}
-                </span>
-              )}
-            </button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors outline-none">
+                  <Bell className="w-5 h-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-primary text-primary-foreground text-[10px] font-bold rounded-full flex items-center justify-center animate-in zoom-in">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="p-0 w-auto" align="end" sideOffset={8}>
+                <NotificationTray 
+                  notifications={notifications} 
+                  onMarkRead={markRead}
+                  onMarkAllRead={markAllRead}
+                />
+              </PopoverContent>
+            </Popover>
             
             <Link href="/app/profile" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
               {avatarSrc && (
