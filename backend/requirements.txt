@@ -12,3 +12,4 @@ requests
 faker
 sentence-transformers
 numpy
+google-generativeai
