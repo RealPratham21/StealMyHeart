@@ -84,6 +84,26 @@ def run_remote_init():
                     );
                 """)
 
+                # 008 - AI History tables
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_chats (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        title TEXT DEFAULT 'New Conversation',
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_messages (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        chat_id UUID NOT NULL REFERENCES ai_chats(id) ON DELETE CASCADE,
+                        role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+                        content TEXT NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+
                 print("Creating triggers...")
                 cur.execute("""
                     CREATE OR REPLACE FUNCTION set_updated_at()
@@ -112,6 +132,8 @@ def run_remote_init():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages (sender_id, receiver_id, created_at);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_chats_user_id ON ai_chats(user_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_chat_id ON ai_messages(chat_id);")
 
                 conn.commit()
                 print("Remote initialization complete!")

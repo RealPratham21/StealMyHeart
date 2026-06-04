@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Heart, Flame, Users, MessageCircle, User, Settings, Bell, ChevronLeft, ChevronRight } from "lucide-react";
+import { Heart, Flame, Users, MessageCircle, User, Settings, Bell, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { fetchMe, primaryPhotoUrl } from "@/lib/me";
 import { apiFetch, WS_BASE_URL } from "@/lib/api";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -14,6 +14,7 @@ const navItems = [
   { href: "/app/likes", icon: Heart, label: "Likes" },
   { href: "/app/matches", icon: Users, label: "Matches" },
   { href: "/app/messages", icon: MessageCircle, label: "Messages" },
+  { href: "/app/coach", icon: Sparkles, label: "AI Coach" },
   { href: "/app/profile", icon: User, label: "Profile" },
   { href: "/app/settings", icon: Settings, label: "Settings" },
 ];
@@ -118,7 +119,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Navigation */}
         <nav className="flex-1 py-4">
           <ul className="flex flex-col gap-1 px-2">
-            {navItems.slice(0, 4).map((item) => {
+            {navItems.slice(0, 5).map((item) => {
               const isActive = pathname === item.href || 
                 (item.href !== "/app" && pathname?.startsWith(item.href));
               return (
@@ -145,7 +146,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Bottom Navigation */}
         <div className="py-4 border-t border-sidebar-border">
           <ul className="flex flex-col gap-1 px-2">
-            {navItems.slice(4).map((item) => {
+            {navItems.slice(5).map((item) => {
               const isActive = pathname === item.href;
               return (
                 <li key={item.href}>

@@ -15,6 +15,7 @@ from .config import (
 )
 from .db import close_db_pool, db_pool, open_db_pool
 from .recommendation import get_profile_embedding, update_preference_vector
+from .ai_coach import AICoach
 from .schemas import (
     CloudinarySignatureRequest,
     LoginRequest,
@@ -750,6 +751,62 @@ def mark_all_notifications_read(request: Request) -> dict:
             )
             conn.commit()
     return {"message": "All notifications marked as read."}
+
+
+@app.post("/api/ai/coach")
+async def ai_coach_ask(payload: dict, request: Request):
+    user_id = _get_current_user_id(request)
+    question = payload.get("question")
+    chat_id = payload.get("chatId")
+    
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required.")
+    
+    coach = AICoach(user_id)
+    response, final_chat_id = await coach.ask(question, chat_id)
+    return {"response": response, "chatId": final_chat_id}
+
+
+@app.get("/api/ai/chats")
+def get_ai_chats(request: Request):
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, title, created_at FROM ai_chats WHERE user_id = %s ORDER BY updated_at DESC",
+                (user_id,)
+            )
+            rows = cur.fetchall()
+            return [{"id": str(r[0]), "title": r[1], "createdAt": r[2].isoformat()} for r in rows]
+
+
+@app.get("/api/ai/chats/{chat_id}")
+def get_ai_chat_messages(chat_id: str, request: Request):
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            # Verify ownership
+            cur.execute("SELECT user_id FROM ai_chats WHERE id = %s", (chat_id,))
+            row = cur.fetchone()
+            if not row or str(row[0]) != user_id:
+                raise HTTPException(status_code=403, detail="Forbidden")
+            
+            cur.execute(
+                "SELECT role, content, created_at FROM ai_messages WHERE chat_id = %s ORDER BY created_at ASC",
+                (chat_id,)
+            )
+            rows = cur.fetchall()
+            return [{"role": r[0], "content": r[1], "createdAt": r[2].isoformat()} for r in rows]
+
+
+@app.delete("/api/ai/chats/{chat_id}")
+def delete_ai_chat(chat_id: str, request: Request):
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM ai_chats WHERE id = %s AND user_id = %s", (chat_id, user_id))
+            conn.commit()
+    return {"message": "Chat deleted"}
 
 
 @app.post("/api/uploads/signature")
