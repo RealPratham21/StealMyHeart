@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import cloudinary
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from .auth import create_access_token, decode_access_token, hash_password, verify_password
 from .config import (
     CLOUD_NAME,
@@ -12,10 +13,15 @@ from .config import (
     CLOUDINARY_API_SECRET,
     FRONTEND_ORIGIN,
     JWT_SECRET,
+    RAZORPAY_KEY_ID,
+    RAZORPAY_KEY_SECRET,
 )
 from .db import close_db_pool, db_pool, open_db_pool
 from .recommendation import get_profile_embedding, update_preference_vector
 from .ai_coach import AICoach
+import razorpay
+import hmac
+import time
 from .schemas import (
     CloudinarySignatureRequest,
     LoginRequest,
@@ -96,9 +102,16 @@ async def create_and_push_notification(
 manager = ConnectionManager()
 
 # Configure CORS
-origins = [FRONTEND_ORIGIN]
+origins = [
+    FRONTEND_ORIGIN,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 if "," in FRONTEND_ORIGIN:
-    origins = [o.strip() for o in FRONTEND_ORIGIN.split(",")]
+    origins.extend([o.strip() for o in FRONTEND_ORIGIN.split(",")])
+
+# Remove duplicates
+origins = list(set(origins))
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,6 +120,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler to ensure CORS headers are added even on 500 errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"GLOBAL ERROR: {exc}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+    )
 
 
 @app.get("/healthz")
@@ -402,6 +426,62 @@ def get_matches(request: Request) -> list:
                 }
                 for r in rows
             ]
+
+@app.get("/api/matches/likes-me")
+def get_likes_me(request: Request):
+    user_id = _get_current_user_id(request)
+    with db_pool.connection() as conn:
+        with conn.cursor() as cur:
+            # 1. Check if user is premium
+            cur.execute("SELECT is_premium, premium_until FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            is_premium = row[0] if row else False
+            premium_until = row[1] if row else None
+            
+            # Check for expiry
+            if is_premium and premium_until and premium_until < datetime.now(timezone.utc):
+                is_premium = False
+                cur.execute("UPDATE users SET is_premium = FALSE WHERE id = %s", (user_id,))
+                conn.commit()
+
+            # 2. Get people who liked the current user but user hasn't swiped on them yet
+            cur.execute(
+                """
+                SELECT u.id, u.first_name, u.photo_urls, u.bio, u.city, u.interests
+                FROM swipes s
+                JOIN users u ON s.swiper_id = u.id
+                LEFT JOIN swipes s2 ON s2.swiper_id = %s AND s2.swiped_id = u.id
+                WHERE s.swiped_id = %s AND s.direction = TRUE AND s2.id IS NULL
+                """,
+                (user_id, user_id)
+            )
+            rows = cur.fetchall()
+            
+            likes = []
+            for r in rows:
+                if is_premium:
+                    # Full data for Gold members
+                    likes.append({
+                        "id": str(r[0]),
+                        "firstName": r[1],
+                        "photoUrl": r[2][0] if r[2] else None,
+                        "bio": r[3],
+                        "city": r[4],
+                        "interests": r[5]
+                    })
+                else:
+                    # Blurred data for free members
+                    likes.append({
+                        "id": str(r[0]),
+                        "firstName": "Gold Member",
+                        "photoUrl": r[2][0] if r[2] else None,
+                        "isBlurred": True
+                    })
+            
+            return {
+                "isPremium": is_premium,
+                "likes": likes
+            }
 
 @app.get("/api/conversations")
 def get_conversations(request: Request) -> list:
@@ -807,6 +887,155 @@ def delete_ai_chat(chat_id: str, request: Request):
             cur.execute("DELETE FROM ai_chats WHERE id = %s AND user_id = %s", (chat_id, user_id))
             conn.commit()
     return {"message": "Chat deleted"}
+
+
+# --- Payment Endpoints ---
+
+@app.post("/api/payments/create-order")
+def create_payment_order(request: Request):
+    print("--- PAYMENT ORDER CREATION START ---")
+    user_id = _get_current_user_id(request)
+    print(f"User ID: {user_id}")
+    
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise HTTPException(status_code=500, detail="Razorpay not configured")
+
+    client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    
+    amount = 10000  # ₹100 in paise
+    currency = "INR"
+    
+    try:
+        # Receipt must be <= 40 chars
+        receipt_id = f"rcpt_{user_id[:8]}_{int(time.time())}"
+        order_data = {
+            "amount": amount,
+            "currency": currency,
+            "receipt": receipt_id,
+            "notes": {
+                "user_id": user_id,
+                "plan": "Gold"
+            }
+        }
+        order = client.order.create(data=order_data)
+        
+        # Log to database
+        try:
+            with db_pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO payments (user_id, order_id, amount, status)
+                        VALUES (%s, %s, %s, 'PENDING')
+                        """,
+                        (user_id, order["id"], amount)
+                    )
+                    conn.commit()
+        except Exception as db_e:
+            print(f"Database Error logging payment: {db_e}")
+            # We don't necessarily want to fail the whole request if DB logging fails,
+            # but for Razorpay, it's better to have the record.
+            # However, if the table doesn't exist, this will fail.
+            raise HTTPException(status_code=500, detail=f"Database error: {str(db_e)}")
+                
+        return {
+            "orderId": order["id"],
+            "amount": amount,
+            "currency": currency,
+            "keyId": RAZORPAY_KEY_ID
+        }
+    except Exception as e:
+        # Catch Razorpay specific errors or other errors
+        err_msg = str(e)
+        if "Authentication failed" in err_msg:
+            print(f"Razorpay Auth Error: {err_msg}")
+            raise HTTPException(status_code=401, detail="Razorpay authentication failed. Check your RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.")
+        
+        if "razorpay" in str(type(e)).lower() or "razorpay" in err_msg.lower():
+            print(f"Razorpay API Error: {e}")
+            raise HTTPException(status_code=400, detail=f"Razorpay error: {err_msg}")
+
+        print(f"Unexpected Payment Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {err_msg}")
+
+
+@app.post("/api/payments/verify")
+async def verify_payment(payload: dict, request: Request):
+    user_id = _get_current_user_id(request)
+    
+    if not RAZORPAY_KEY_SECRET:
+        raise HTTPException(status_code=500, detail="Razorpay secret not configured")
+
+    razorpay_order_id = payload.get("razorpay_order_id")
+    razorpay_payment_id = payload.get("razorpay_payment_id")
+    razorpay_signature = payload.get("razorpay_signature")
+    
+    if not all([razorpay_order_id, razorpay_payment_id, razorpay_signature]):
+        raise HTTPException(status_code=400, detail="Missing payment details")
+
+    try:
+        # Verify signature
+        # Generated signature: HMAC-SHA256(order_id + "|" + payment_id, secret)
+        msg = f"{razorpay_order_id}|{razorpay_payment_id}"
+        generated_signature = hmac.new(
+            RAZORPAY_KEY_SECRET.encode(),
+            msg.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        if generated_signature != razorpay_signature:
+            print(f"Signature mismatch for order {razorpay_order_id}")
+            # Log failure
+            with db_pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE payments SET status = 'FAILED', updated_at = NOW() WHERE order_id = %s",
+                        (razorpay_order_id,)
+                    )
+                    conn.commit()
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+
+        # Signature valid! Update user and payment status
+        with db_pool.connection() as conn:
+            with conn.cursor() as cur:
+                # 1. Update payment record
+                cur.execute(
+                    """
+                    UPDATE payments 
+                    SET status = 'SUCCESS', payment_id = %s, signature = %s, updated_at = NOW() 
+                    WHERE order_id = %s
+                    """,
+                    (razorpay_payment_id, razorpay_signature, razorpay_order_id)
+                )
+                
+                # 2. Grant premium status (30 days)
+                cur.execute(
+                    """
+                    UPDATE users 
+                    SET is_premium = TRUE, premium_until = NOW() + INTERVAL '30 days'
+                    WHERE id = %s
+                    """,
+                    (user_id,)
+                )
+                conn.commit()
+                
+        # Send a notification
+        await create_and_push_notification(
+            user_id=user_id,
+            notif_type="system",
+            title="Welcome to Gold! ✨",
+            body="Your premium status is now active for 30 days. Enjoy seeing who likes you!",
+            link="/app/likes"
+        )
+        
+        return {"status": "success", "message": "Premium activated"}
+    except Exception as e:
+        print(f"Verification Error: {e}")
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
 @app.post("/api/uploads/signature")

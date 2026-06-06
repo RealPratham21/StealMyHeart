@@ -13,3 +13,4 @@ faker
 sentence-transformers
 numpy
 google-generativeai
+razorpay
