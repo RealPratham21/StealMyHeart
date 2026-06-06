@@ -104,6 +104,24 @@ def run_remote_init():
                     );
                 """)
 
+                # 009 - Payments and Premium
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TIMESTAMPTZ;")
+                
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS payments (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        order_id TEXT UNIQUE NOT NULL,
+                        payment_id TEXT,
+                        signature TEXT,
+                        amount INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+
                 print("Creating triggers...")
                 cur.execute("""
                     CREATE OR REPLACE FUNCTION set_updated_at()
@@ -134,6 +152,8 @@ def run_remote_init():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_chats_user_id ON ai_chats(user_id);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_chat_id ON ai_messages(chat_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);")
 
                 conn.commit()
                 print("Remote initialization complete!")
